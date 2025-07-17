@@ -29,5 +29,5 @@ jobs:
 
       - name: Add Hugging Face remote and push
         run: |
-          git remote add hf https://user:${HF_TOKEN}@huggingface.co/spaces/arafmustavi/ic_demo_space_github_actions
+          git remote add hf https://user:${HF_TOKEN}@huggingface.co/spaces/arafmustavi/ic_demo_github_actions
           git push hf main --force
