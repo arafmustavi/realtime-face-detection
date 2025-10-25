@@ -5,7 +5,7 @@ from PIL import Image
 
 # Load the Haarcascade classifier ---
 # Make sure 'haarcascade_frontalface_default.xml' is in the same directory as this app.py
-HAARCASCADE_PATH = "haarcascade_frontalcatface_extended.xml"
+HAARCASCADE_PATH = "haarcascade_frontalcatface.xml"
 try:
     face_cascade = cv2.CascadeClassifier(HAARCASCADE_PATH)
     if face_cascade.empty():
