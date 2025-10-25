@@ -12,3 +12,5 @@ short_description: github push to hugging face deployment
 ---
 
 Check out the configuration reference at https://huggingface.co/docs/hub/spaces-config-reference
+
+Updated the env
