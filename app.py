@@ -8,21 +8,76 @@ Author : Araf Mustavi
 License: Apache 2.0
 """
 
-import cv2
+import os
+import sys
+import urllib.request
 import numpy as np
 import gradio as gr
 from PIL import Image
 
 # ---------------------------------------------------------------------
-# 1. Load the Haar Cascade classifier
+# 1. Import OpenCV with diagnostics
 # ---------------------------------------------------------------------
-# OpenCV ships pre-trained Haar cascades in `cv2.data.haarcascades`.
-# Using the bundled path means we DON'T need to commit the XML file
-# to the repo — perfect for Hugging Face Spaces.
+try:
+    import cv2
+    print(f"✅ OpenCV imported successfully — version: {cv2.__version__}")
+    print(f"   cv2 module path: {cv2.__file__}")
+    print(f"   Has CascadeClassifier: {hasattr(cv2, 'CascadeClassifier')}")
+except ImportError as e:
+    print(f"❌ Failed to import cv2: {e}")
+    sys.exit(1)
+
+
+# ---------------------------------------------------------------------
+# 2. Locate / download the Haar Cascade XML files
+# ---------------------------------------------------------------------
+# Strategy:
+#   1. Try cv2.data.haarcascades (bundled with OpenCV)
+#   2. Fall back to local ./haarcascades/ directory
+#   3. Fall back to downloading from OpenCV's official GitHub repo
 # ---------------------------------------------------------------------
 
-FACE_CASCADE_PATH = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
-EYE_CASCADE_PATH  = cv2.data.haarcascades + "haarcascade_eye.xml"
+HAARCASCADE_URLS = {
+    "haarcascade_frontalface_default.xml":
+        "https://raw.githubusercontent.com/opencv/opencv/4.x/data/haarcascades/haarcascade_frontalface_default.xml",
+    "haarcascade_eye.xml":
+        "https://raw.githubusercontent.com/opencv/opencv/4.x/data/haarcascades/haarcascade_eye.xml",
+}
+
+LOCAL_CASCADE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "haarcascades")
+os.makedirs(LOCAL_CASCADE_DIR, exist_ok=True)
+
+
+def resolve_cascade(filename: str) -> str:
+    """Locate a Haar Cascade XML file, downloading it if necessary."""
+    # 1️⃣ Try OpenCV's bundled path
+    try:
+        bundled = os.path.join(cv2.data.haarcascades, filename)
+        if os.path.exists(bundled):
+            print(f"✅ Using bundled cascade: {bundled}")
+            return bundled
+    except AttributeError:
+        print("⚠️  cv2.data.haarcascades not available — using fallback.")
+
+    # 2️⃣ Try local ./haarcascades/ folder
+    local = os.path.join(LOCAL_CASCADE_DIR, filename)
+    if os.path.exists(local):
+        print(f"✅ Using local cascade: {local}")
+        return local
+
+    # 3️⃣ Download from OpenCV's official GitHub
+    url = HAARCASCADE_URLS.get(filename)
+    if url:
+        print(f"⬇️  Downloading {filename} from GitHub…")
+        urllib.request.urlretrieve(url, local)
+        print(f"✅ Downloaded to: {local}")
+        return local
+
+    raise FileNotFoundError(f"Cannot locate cascade file: {filename}")
+
+
+FACE_CASCADE_PATH = resolve_cascade("haarcascade_frontalface_default.xml")
+EYE_CASCADE_PATH  = resolve_cascade("haarcascade_eye.xml")
 
 face_cascade = cv2.CascadeClassifier(FACE_CASCADE_PATH)
 eye_cascade  = cv2.CascadeClassifier(EYE_CASCADE_PATH)
@@ -33,7 +88,7 @@ print("✅ Haar Cascade classifiers loaded successfully.")
 
 
 # ---------------------------------------------------------------------
-# 2. Face Detection Function
+# 3. Face Detection Function
 # ---------------------------------------------------------------------
 def detect_faces(
     image: Image.Image,
@@ -41,39 +96,21 @@ def detect_faces(
     min_neighbors: int = 5,
     detect_eyes: bool = False,
 ):
-    """
-    Detects faces (and optionally eyes) in a webcam frame using
-    Haar Cascade classifiers, then draws bounding boxes.
-
-    Parameters
-    ----------
-    image        : PIL.Image from the Gradio webcam stream
-    scale_factor : How much the image size is reduced at each scale
-    min_neighbors: How many neighbors each candidate rectangle should have
-    detect_eyes  : Whether to also draw eye bounding boxes
-
-    Returns
-    -------
-    Annotated PIL.Image with bounding boxes.
-    """
+    """Detect faces (and optionally eyes) in a webcam frame."""
     if image is None:
         return None
 
-    # PIL -> NumPy (RGB)
     frame = np.array(image)
 
-    # Downscale for faster inference on HF Spaces free CPU tier.
-    # Keeps latency low and helps enforce the low-FPS target.
+    # Downscale for faster inference on HF free CPU tier
     h, w = frame.shape[:2]
     max_width = 480
     if w > max_width:
         scale = max_width / w
         frame = cv2.resize(frame, (max_width, int(h * scale)))
 
-    # Convert to grayscale (Haar Cascade requirement)
     gray = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
 
-    # ---- Face detection ----
     faces = face_cascade.detectMultiScale(
         gray,
         scaleFactor=scale_factor,
@@ -81,21 +118,13 @@ def detect_faces(
         minSize=(40, 40),
     )
 
-    # Draw green bounding boxes on detected faces
     for (x, y, fw, fh) in faces:
         cv2.rectangle(frame, (x, y), (x + fw, y + fh), (0, 255, 0), 2)
         cv2.putText(
-            frame,
-            "Face",
-            (x, y - 8),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.5,
-            (0, 255, 0),
-            1,
-            cv2.LINE_AA,
+            frame, "Face", (x, y - 8),
+            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1, cv2.LINE_AA,
         )
 
-        # ---- Optional eye detection inside each face ROI ----
         if detect_eyes:
             roi_gray = gray[y:y + fh, x:x + fw]
             roi_color = frame[y:y + fh, x:x + fw]
@@ -107,29 +136,18 @@ def detect_faces(
                     roi_color, (ex, ey), (ex + ew, ey + eh), (255, 200, 0), 1
                 )
 
-    # Overlay a small HUD with the detection count
     cv2.putText(
-        frame,
-        f"Faces detected: {len(faces)}",
-        (10, 25),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.6,
-        (255, 255, 255),
-        2,
-        cv2.LINE_AA,
+        frame, f"Faces detected: {len(faces)}",
+        (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.6,
+        (255, 255, 255), 2, cv2.LINE_AA,
     )
 
     return Image.fromarray(frame)
 
 
 # ---------------------------------------------------------------------
-# 3. Gradio Interface (Low-FPS streaming)
+# 4. Gradio Interface (Low-FPS streaming)
 # ---------------------------------------------------------------------
-# `stream_every=0.5` throttles the pipeline to ~2 FPS, which is
-# gentle on the Hugging Face free CPU tier and prevents queue buildup.
-# Increase to 1.0 for ~1 FPS, decrease to 0.25 for ~4 FPS.
-# ---------------------------------------------------------------------
-
 LOW_FPS_INTERVAL = 0.5   # seconds between frames  →  ~2 FPS
 
 with gr.Blocks(title="Realtime Face Detection — Haar Cascade") as demo:
@@ -145,7 +163,6 @@ with gr.Blocks(title="Realtime Face Detection — Haar Cascade") as demo:
     )
 
     with gr.Row():
-        # ---- Left column: webcam input + controls ----
         with gr.Column(scale=1):
             webcam_input = gr.Image(
                 type="pil",
@@ -155,25 +172,17 @@ with gr.Blocks(title="Realtime Face Detection — Haar Cascade") as demo:
                 mirror_webcam=True,
             )
             scale_factor_slider = gr.Slider(
-                minimum=1.05,
-                maximum=1.5,
-                value=1.2,
-                step=0.05,
+                minimum=1.05, maximum=1.5, value=1.2, step=0.05,
                 label="Scale Factor (detection sensitivity)",
             )
             min_neighbors_slider = gr.Slider(
-                minimum=1,
-                maximum=10,
-                value=5,
-                step=1,
+                minimum=1, maximum=10, value=5, step=1,
                 label="Min Neighbors (detection quality)",
             )
             detect_eyes_checkbox = gr.Checkbox(
-                value=False,
-                label="👁️ Also detect eyes (slower)",
+                value=False, label="👁️ Also detect eyes (slower)",
             )
 
-        # ---- Right column: annotated output ----
         with gr.Column(scale=1):
             output_image = gr.Image(
                 type="pil",
@@ -181,7 +190,6 @@ with gr.Blocks(title="Realtime Face Detection — Haar Cascade") as demo:
                 streaming=True,
             )
 
-    # ---- Wire the streaming pipeline (low FPS) ----
     webcam_input.stream(
         fn=detect_faces,
         inputs=[
@@ -191,9 +199,9 @@ with gr.Blocks(title="Realtime Face Detection — Haar Cascade") as demo:
             detect_eyes_checkbox,
         ],
         outputs=output_image,
-        stream_every=LOW_FPS_INTERVAL,   # 🔑 throttles FPS
+        stream_every=LOW_FPS_INTERVAL,
         show_progress="hidden",
-        concurrency_limit=1,             # avoid queue pile-up on HF free tier
+        concurrency_limit=1,
     )
 
     gr.Markdown(
@@ -205,7 +213,7 @@ with gr.Blocks(title="Realtime Face Detection — Haar Cascade") as demo:
     )
 
 # ---------------------------------------------------------------------
-# 4. Launch (HF Spaces auto-detects `demo`)
+# 5. Launch
 # ---------------------------------------------------------------------
 if __name__ == "__main__":
     demo.queue(max_size=5).launch()

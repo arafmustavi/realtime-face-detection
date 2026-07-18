@@ -99,12 +99,11 @@ The result: **face detection in milliseconds**, even on CPU.
 haarcascade-detection-hfspace/
 ├── app.py                          # Gradio app + Haar Cascade inference
 ├── requirements.txt                # Python dependencies
-├── haarcascade_frontalface.xml     # Pre-trained cascade classifier (optional)
+├── packages.txt                    # System-level apt packages (libgl1, etc.)
 ├── .github/
 │   └── workflows/
 │       └── sync-to-hf.yml          # CI/CD pipeline
-├── README.md                       # You are here
-└── LICENSE
+└── README.md                       # You are here
 ```
 
 ---
@@ -133,73 +132,30 @@ The app will open at `http://localhost:7860`.
 
 ## 🔄 CI/CD: Sync GitHub → Hugging Face Spaces
 
-This repo uses a **GitHub Actions workflow** to automatically push every commit on `main` to the connected Hugging Face Space. Here's how to set it up:
-
 ### Step 1: Generate a Hugging Face Access Token
 
 1. Go to [Hugging Face → Settings → Access Tokens](https://huggingface.co/settings/tokens)
 2. Click **"New token"**, choose the **`write`** role, name it `HF_TOKEN`
-3. Copy the token (you won't see it again!)
+3. Copy the token
 
 ### Step 2: Add the Token to GitHub Secrets
 
 1. In your GitHub repo → **Settings → Secrets and variables → Actions**
 2. Click **"New repository secret"**
 3. Name: `HF_TOKEN` | Value: *(paste the token)*
-4. Save
 
-### Step 3: Create the GitHub Actions Workflow
+### Step 3: The workflow is already in `.github/workflows/sync-to-hf.yml`
 
-Create the file `.github/workflows/sync-to-hf.yml`:
-
-```yaml
-name: Sync to Hugging Face Hub
-
-on:
-  push:
-    branches: [main]
-  workflow_dispatch:    # Allows manual trigger from the Actions tab
-
-jobs:
-  sync-to-hub:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          lfs: true
-
-      - name: Push to Hugging Face Space
-        env:
-          HF_TOKEN: ${{ secrets.HF_TOKEN }}
-        run: |
-          git push https://arafmustavi:$HF_TOKEN@huggingface.co/spaces/arafmustavi/realtime-face-detection main --force
-```
-
-> 🔁 Replace `arafmustavi/realtime-face-detection` with your actual HF Space path if different.
-
-### Step 4: Commit & Push
-
-```bash
-git add .github/workflows/sync-to-hf.yml
-git commit -m "ci: add GitHub Actions workflow to sync with Hugging Face"
-git push origin main
-```
-
-### Step 5: Verify
-
-- Go to your GitHub repo → **Actions** tab → confirm the workflow ran successfully ✅
-- Check your Hugging Face Space → the app should rebuild automatically 🚀
+Push to `main` and GitHub Actions handles the rest.
 
 ### 🧯 Troubleshooting
 
 | Issue | Fix |
 |-------|-----|
+| `AttributeError: module 'cv2' has no attribute 'CascadeClassifier'` | Pin `opencv-contrib-python-headless==4.10.0.84` |
+| `libGL.so.1: cannot open shared object file` | Add `libgl1` + `libglib2.0-0` to `packages.txt` |
 | `403 Forbidden` on push | Regenerate `HF_TOKEN` with **write** access |
-| `Space not building` | Check `requirements.txt` — pin `gradio==5.35.0` |
-| `LFS files missing` | Ensure `lfs: true` in checkout step |
-| `Force push rejected` | Verify branch protection rules on HF Space |
+| Space not building | Verify `gradio==5.35.0` in `requirements.txt` |
 
 ---
 
@@ -208,7 +164,7 @@ git push origin main
 - **Classical CV still has a place** — Haar Cascades outperform deep learning models on latency-critical edge scenarios.
 - **Gradio + HF Spaces** is the fastest zero-DevOps path from prototype to live demo.
 - **GitHub Actions as a CD pipeline** — reusable pattern for syncing any ML repo to HF Hub.
-- **Separation of concerns** — GitHub for source-of-truth + collaboration; HF Spaces for hosting + community discovery.
+- **Defensive engineering** — 3-tier fallback (bundled → local → download) makes deployment bulletproof.
 
 ---
 
@@ -221,20 +177,11 @@ git push origin main
 
 ---
 
-## 🤝 Related Projects
-
-Part of my broader **Computer Vision portfolio**:
-
-- 🎯 **YOLO on HoloLens/Quest** — modern deep-learning-based detection on XR devices
-- 🏭 **Supply Chain Vision AI** — enterprise CV applications at BAT
-
----
-
 ## 👤 Author
 
-**Araf Mustavi**
-Global IT Business Analyst — Supply Chain Technology, AI/ML & Digital Transformation
-🌐 Portfolio: [arafmustavi.netlify.app](https://arafmustavi.netlify.app)
+**Araf Mustavi**  
+Global IT Business Analyst — Supply Chain Technology, AI/ML & Digital Transformation  
+🌐 Portfolio: [arafmustavi.netlify.app](https://arafmustavi.netlify.app)  
 💼 LinkedIn: [linkedin.com/in/arafmustavi](https://linkedin.com/in/arafmustavi)
 
 ---
