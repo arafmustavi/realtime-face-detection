@@ -9,8 +9,7 @@ app_file: app.py
 pinned: true
 license: apache-2.0
 short_description: Realtime face detection from video feed using Haar Cascades
-🎯 Realtime Face Detection — Haar Cascade × Hugging Face Spaces
-> A lightweight, browser-based **realtime face detection app** powered by **OpenCV Haar Cascade classifiers**, deployed on **Hugging Face Spaces** via **Gradio**, and continuously delivered through a **GitHub Actions CI/CD pipeline**.
+🎯 Realtime Face Detection — Haar Cascade × Hugging Face Spaces > A lightweight, browser-based **realtime face detection app** powered by **OpenCV Haar Cascade classifiers**, deployed on **Hugging Face Spaces** via **Gradio**, and continuously delivered through a **GitHub Actions CI/CD pipeline**.
 ![Hugging Face Space](https://img.shields.io/badge/🤗%20Hugging%20Face-Space-blue)
 ![Made with OpenCV](https://img.shields.io/badge/Made%20with-OpenCV-5C3EE8?logo=opencv&logoColor=white)
 ![Gradio](https://img.shields.io/badge/UI-Gradio-orange)
