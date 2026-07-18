@@ -1,100 +1,211 @@
-import gradio as gr
+"""
+Realtime Face Detection — Haar Cascade × Hugging Face Spaces
+------------------------------------------------------------
+A low-FPS streaming face detection app using OpenCV Haar Cascade
+classifiers, served via Gradio on Hugging Face Spaces.
+
+Author : Araf Mustavi
+License: Apache 2.0
+"""
+
 import cv2
 import numpy as np
+import gradio as gr
 from PIL import Image
 
-# Load the Haarcascade classifier ---
-# Make sure 'haarcascade_frontalface_default.xml' is in the same directory as this app.py
-HAARCASCADE_PATH = "haarcascade_frontalcatface.xml"
-try:
-    face_cascade = cv2.CascadeClassifier(HAARCASCADE_PATH)
-    if face_cascade.empty():
-        raise IOError(f"Could not load Haarcascade classifier from {HAARCASCADE_PATH}")
-    print("Haarcascade classifier loaded successfully!")
-except Exception as e:
-    print(f"Error loading Haarcascade classifier: {e}")
-    # You might want to add a fallback or an error message in the UI if it fails.
-    face_cascade = None # Set to None so the detection function can handle it.
+# ---------------------------------------------------------------------
+# 1. Load the Haar Cascade classifier
+# ---------------------------------------------------------------------
+# OpenCV ships pre-trained Haar cascades in `cv2.data.haarcascades`.
+# Using the bundled path means we DON'T need to commit the XML file
+# to the repo — perfect for Hugging Face Spaces.
+# ---------------------------------------------------------------------
+
+FACE_CASCADE_PATH = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+EYE_CASCADE_PATH  = cv2.data.haarcascades + "haarcascade_eye.xml"
+
+face_cascade = cv2.CascadeClassifier(FACE_CASCADE_PATH)
+eye_cascade  = cv2.CascadeClassifier(EYE_CASCADE_PATH)
+
+if face_cascade.empty():
+    raise IOError(f"❌ Failed to load face cascade from {FACE_CASCADE_PATH}")
+print("✅ Haar Cascade classifiers loaded successfully.")
 
 
-# Face Detection Function ---
-def detect_faces_from_webcam(image: Image.Image, scale_factor: float = 1.1, min_neighbors: int = 5):
+# ---------------------------------------------------------------------
+# 2. Face Detection Function
+# ---------------------------------------------------------------------
+def detect_faces(
+    image: Image.Image,
+    scale_factor: float = 1.2,
+    min_neighbors: int = 5,
+    detect_eyes: bool = False,
+):
+    """
+    Detects faces (and optionally eyes) in a webcam frame using
+    Haar Cascade classifiers, then draws bounding boxes.
+
+    Parameters
+    ----------
+    image        : PIL.Image from the Gradio webcam stream
+    scale_factor : How much the image size is reduced at each scale
+    min_neighbors: How many neighbors each candidate rectangle should have
+    detect_eyes  : Whether to also draw eye bounding boxes
+
+    Returns
+    -------
+    Annotated PIL.Image with bounding boxes.
+    """
     if image is None:
-        return None # Return None if no image is provided (e.g., webcam not active yet)
-    if face_cascade is None:
-        # If cascade failed to load, return the original image with an error message
-        # (This is a simple way to handle, could be more sophisticated)
-        print("Haarcascade classifier not loaded. Cannot perform detection.")
-        return image # Or draw text on image: cv2.putText(np.array(image), "Error: Classifier not loaded", ...)
+        return None
 
-    # Convert PIL Image to OpenCV format (BGR)
-    image_np = np.array(image)
-    image_bgr = cv2.cvtColor(image_np, cv2.COLOR_RGB2BGR) # OpenCV works in BGR by default
-    gray_image = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
+    # PIL -> NumPy (RGB)
+    frame = np.array(image)
 
-    # Detect faces
+    # Downscale for faster inference on HF Spaces free CPU tier.
+    # Keeps latency low and helps enforce the low-FPS target.
+    h, w = frame.shape[:2]
+    max_width = 480
+    if w > max_width:
+        scale = max_width / w
+        frame = cv2.resize(frame, (max_width, int(h * scale)))
+
+    # Convert to grayscale (Haar Cascade requirement)
+    gray = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
+
+    # ---- Face detection ----
     faces = face_cascade.detectMultiScale(
-        gray_image,
+        gray,
         scaleFactor=scale_factor,
         minNeighbors=min_neighbors,
-        minSize=(30, 30) # Minimum object size to be detected. Objects smaller than this are ignored.
+        minSize=(40, 40),
     )
 
-    # Draw rectangles around the faces on the BGR image
-    for (x, y, w, h) in faces:
-        cv2.rectangle(image_bgr, (x, y), (x+w, y+h), (0, 255, 0), 2) # Green rectangle
+    # Draw green bounding boxes on detected faces
+    for (x, y, fw, fh) in faces:
+        cv2.rectangle(frame, (x, y), (x + fw, y + fh), (0, 255, 0), 2)
+        cv2.putText(
+            frame,
+            "Face",
+            (x, y - 8),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.5,
+            (0, 255, 0),
+            1,
+            cv2.LINE_AA,
+        )
 
-    # Convert back to PIL Image (RGB) for Gradio display
-    annotated_image_pil = Image.fromarray(cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB))
-    return annotated_image_pil
+        # ---- Optional eye detection inside each face ROI ----
+        if detect_eyes:
+            roi_gray = gray[y:y + fh, x:x + fw]
+            roi_color = frame[y:y + fh, x:x + fw]
+            eyes = eye_cascade.detectMultiScale(
+                roi_gray, scaleFactor=1.1, minNeighbors=8, minSize=(15, 15)
+            )
+            for (ex, ey, ew, eh) in eyes:
+                cv2.rectangle(
+                    roi_color, (ex, ey), (ex + ew, ey + eh), (255, 200, 0), 1
+                )
 
-# --- 3. Gradio Interface ---
-with gr.Blocks() as demo:
+    # Overlay a small HUD with the detection count
+    cv2.putText(
+        frame,
+        f"Faces detected: {len(faces)}",
+        (10, 25),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.6,
+        (255, 255, 255),
+        2,
+        cv2.LINE_AA,
+    )
+
+    return Image.fromarray(frame)
+
+
+# ---------------------------------------------------------------------
+# 3. Gradio Interface (Low-FPS streaming)
+# ---------------------------------------------------------------------
+# `stream_every=0.5` throttles the pipeline to ~2 FPS, which is
+# gentle on the Hugging Face free CPU tier and prevents queue buildup.
+# Increase to 1.0 for ~1 FPS, decrease to 0.25 for ~4 FPS.
+# ---------------------------------------------------------------------
+
+LOW_FPS_INTERVAL = 0.5   # seconds between frames  →  ~2 FPS
+
+with gr.Blocks(title="Realtime Face Detection — Haar Cascade") as demo:
     gr.Markdown(
         """
-        # Real-time Haarcascade Face Detection
-        Stream your front camera to detect faces using the OpenCV Haarcascade classifier.
+        # 🎯 Realtime Face Detection (Haar Cascade)
+        A lightweight **classical computer vision** demo running on
+        **Hugging Face Spaces** via Gradio.
+
+        > ⚙️ Streaming is throttled to **~2 FPS** to stay within the free CPU tier.
+        > Allow webcam access when prompted.
         """
     )
+
     with gr.Row():
-        with gr.Column():
-            # Webcam input for continuous streaming
+        # ---- Left column: webcam input + controls ----
+        with gr.Column(scale=1):
             webcam_input = gr.Image(
                 type="pil",
-                label="Your Webcam Feed",
-                sources=["webcam"], # Enable webcam as input source
-                streaming=True,     # Enable real-time streaming
-                # mirror_webcam=True # Optionally mirror the webcam feed
+                label="📷 Your Webcam Feed",
+                sources=["webcam"],
+                streaming=True,
+                mirror_webcam=True,
             )
-            # Sliders to adjust Haarcascade parameters
             scale_factor_slider = gr.Slider(
-                minimum=1.01,
+                minimum=1.05,
                 maximum=1.5,
-                value=1.1,
-                step=0.01,
-                label="Scale Factor (detection sensitivity)"
+                value=1.2,
+                step=0.05,
+                label="Scale Factor (detection sensitivity)",
             )
             min_neighbors_slider = gr.Slider(
-                minimum=0,
+                minimum=1,
                 maximum=10,
                 value=5,
                 step=1,
-                label="Min Neighbors (detection quality)"
+                label="Min Neighbors (detection quality)",
+            )
+            detect_eyes_checkbox = gr.Checkbox(
+                value=False,
+                label="👁️ Also detect eyes (slower)",
             )
 
-        with gr.Column():
+        # ---- Right column: annotated output ----
+        with gr.Column(scale=1):
             output_image = gr.Image(
                 type="pil",
-                label="Detected Faces (Real-time)"
+                label="🟩 Detection Output",
+                streaming=True,
             )
 
-    # Stream the input image to the detection function
+    # ---- Wire the streaming pipeline (low FPS) ----
     webcam_input.stream(
-        fn=detect_faces_from_webcam,
-        inputs=[webcam_input, scale_factor_slider, min_neighbors_slider],
+        fn=detect_faces,
+        inputs=[
+            webcam_input,
+            scale_factor_slider,
+            min_neighbors_slider,
+            detect_eyes_checkbox,
+        ],
         outputs=output_image,
-        stream_every=0.1, # Process a frame every 0.1 seconds (10 FPS)
-        time_limit=300 # Limit stream to 5 minutes to manage resource usage
+        stream_every=LOW_FPS_INTERVAL,   # 🔑 throttles FPS
+        show_progress="hidden",
+        concurrency_limit=1,             # avoid queue pile-up on HF free tier
     )
 
-demo.launch()
+    gr.Markdown(
+        """
+        ---
+        **Built with** OpenCV · Gradio · Hugging Face Spaces  
+        **Author:** [Araf Mustavi](https://arafmustavi.netlify.app)
+        """
+    )
+
+# ---------------------------------------------------------------------
+# 4. Launch (HF Spaces auto-detects `demo`)
+# ---------------------------------------------------------------------
+if __name__ == "__main__":
+    demo.queue(max_size=5).launch()
